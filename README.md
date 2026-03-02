@@ -1,3 +1,4 @@
+![CI](https://github.com/bowen511code/cogwrite/actions/workflows/ci.yml/badge.svg)
 # CogWrite — 认知科学×AI 自媒体写作助手
 
 输入选题与资料，输出结构化提纲、金句、可追溯引用与互动问题的写作助手。
