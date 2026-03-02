@@ -33,3 +33,6 @@ jobs:
           test -f prompts/system.j2
           test -f prompts/generate.j2
           echo "prompts_ok"
+
+      - name: Check golden set format
+        run: python eval/check_golden_format.py
