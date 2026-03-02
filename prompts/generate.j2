@@ -1,0 +1,16 @@
+任务：根据选题与证据片段生成自媒体草稿的结构化 JSON。
+
+选题（topic）：
+{{ topic }}
+
+证据片段（TopK chunks，每段都包含 source_id、chunk_id、content）：
+{{ chunks_json }}
+
+输出 JSON schema（必须严格遵守字段名）：
+{
+  "outline": [{"section_title": "...", "bullets": ["..."]}],
+  "punchlines": [{"type": "hook|transition|ending", "text": "..."}],
+  "interactive_questions": [{"type": "mcq|open|self_test", "text": "..."}],
+  "citations": [{"claim": "...", "source_id": "...", "chunk_id": "...", "evidence_snippet": "..."}],
+  "risk_notes": ["..."]
+}
