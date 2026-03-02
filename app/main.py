@@ -66,3 +66,23 @@ def get_source(source_id: str):
         "published_at": str(row[4]) if row[4] else None,
         "content": row[5],
     }
+
+@app.get("/chunks/{source_id}")
+def list_chunks(source_id: str):
+    """
+    返回某个 source 的所有 chunks（用于检查 chunking 效果）。
+    """
+    conn = get_conn()
+    cur = conn.cursor()
+    cur.execute(
+        "SELECT chunk_id, chunk_index, content FROM chunks WHERE source_id = %s ORDER BY chunk_index ASC;",
+        (source_id,),
+    )
+    rows = cur.fetchall()
+    cur.close()
+    conn.close()
+
+    return [
+        {"chunk_id": r[0], "chunk_index": r[1], "content": r[2]}
+        for r in rows
+    ]
