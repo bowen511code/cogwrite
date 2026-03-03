@@ -54,3 +54,5 @@ http://127.0.0.1:8000/docs
 ```bash
 python -m scripts.generate_draft --topic "如何把间隔重复和提取练习结合起来用于学习与写作？" --top-k 2
 ```
+### 6) 证据门控阈值说明
+> 系统采用证据门控（EVIDENCE_MIN_SIM）：当 Top-1 chunk 相似度低于阈值时返回 no_evidence，避免无依据生成。
