@@ -97,14 +97,33 @@ class GenerateRequest(BaseModel):
 
 @app.post("/generate")
 def generate_api(req: GenerateRequest):
-    """
-    RAG 生成接口：
-    - 输入 topic/top_k
-    - 返回：TopK 证据 + 结构化草稿（已通过 schema 校验）
-    """
-    from scripts.generate_draft import generate  # 复用同一条链路
+    from scripts.generate_draft import generate, NoEvidenceError
 
-    draft, chunks = generate(req.topic, req.top_k)
+    try:
+        draft, chunks = generate(req.topic, req.top_k)
+    except NoEvidenceError as e:
+        return {
+            "error": "no_evidence",
+            "message": str(e),
+            "topic": req.topic,
+            "top_k": req.top_k,
+        }
+    except Exception as e:
+        return {
+            "error": "generation_failed",
+            "message": str(e),
+            "topic": req.topic,
+            "top_k": req.top_k,
+        }
+
+    if not chunks:
+        return {
+            "error": "no_evidence",
+            "message": "No relevant chunks retrieved. Add more sources or adjust query.",
+            "topic": req.topic,
+            "top_k": req.top_k,
+        }
+
     return {
         "topic": req.topic,
         "top_k": req.top_k,

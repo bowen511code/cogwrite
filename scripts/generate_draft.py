@@ -26,6 +26,10 @@ from pydantic import BaseModel, Field, ValidationError
 
 from scripts.openai_client import make_openai_client
 
+class NoEvidenceError(Exception):
+    """Top-K 证据相关性不足时抛出，用于 API 层返回 no_evidence。"""
+    pass
+
 # 加载本地 .env（不提交到 GitHub）
 load_dotenv(".env")
 
@@ -94,21 +98,31 @@ def retrieve_topk_chunks(topic: str, top_k: int):
       e.chunk_id,
       c.source_id,
       c.chunk_index,
-      c.content
+      c.content,
+      (e.embedding <=> %s::vector) AS cosine_distance
     FROM embeddings e
     JOIN chunks c ON c.chunk_id = e.chunk_id
-    ORDER BY e.embedding <=> %s::vector ASC
+    ORDER BY (e.embedding <=> %s::vector) ASC
     LIMIT %s;
     """
-    cur.execute(sql, (qvec_str, top_k))
+    cur.execute(sql, (qvec_str, qvec_str, top_k))
     rows = cur.fetchall()
     cur.close()
     conn.close()
 
-    return [
-        {"chunk_id": r[0], "source_id": r[1], "chunk_index": r[2], "content": r[3]}
-        for r in rows
-    ]
+    out = []
+    for r in rows:
+        dist = float(r[4])
+        sim = 1.0 - dist
+        out.append({
+            "chunk_id": r[0],
+            "source_id": r[1],
+            "chunk_index": r[2],
+            "content": r[3],
+            "cosine_distance": dist,
+            "similarity": sim,
+        })
+    return out
 
 
 # -------------------------
@@ -142,6 +156,10 @@ def generate(topic: str, top_k: int):
         raise RuntimeError("GEN_API_KEY missing (or reuse EMBEDDING_API_KEY)")
 
     chunks = retrieve_topk_chunks(topic, top_k=top_k)
+    min_sim = float(os.getenv("EVIDENCE_MIN_SIM", "0.5"))
+    best_sim = chunks[0].get("similarity", 0.0) if chunks else 0.0
+    if (not chunks) or (best_sim < min_sim):
+        raise NoEvidenceError(f"no_evidence: best_similarity={best_sim:.3f} < {min_sim:.3f}")
     messages = build_messages(topic, chunks)
 
     client = make_openai_client(gen_api_key)
