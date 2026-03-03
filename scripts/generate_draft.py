@@ -1,32 +1,32 @@
 """
-CogWrite - Generate Draft Script
+CogWrite - Generate Draft Script (teaching version, CLI)
 
-目标（MVP）：
+功能（MVP）：
 1) 输入 topic
-2) 用向量检索拿 Top-K chunks（证据包）
-3) 用 Jinja2 渲染 prompts/system.j2 + prompts/generate.j2
+2) 向量检索 Top-K chunks（证据包）
+3) Jinja2 渲染 prompts/system.j2 + prompts/generate.j2
 4) 调用 LLM 生成严格 JSON
-5) 用 Pydantic 校验输出结构（不通过就报错，后续可加修复 fallback）
+5) Pydantic 校验输出结构
 
-依赖：
-- openai
-- python-dotenv
-- psycopg2-binary
-- jinja2
-- pydantic
+网络鲁棒性（可配置开关）：
+- OPENAI_TIMEOUT / OPENAI_CONNECT_TIMEOUT / OPENAI_FORCE_IPV4 / OPENAI_PROXY
+这些由 scripts/openai_client.py 统一处理。
 """
 
+import argparse
 import json
 import os
 from pathlib import Path
-from typing import List, Literal, Optional
+from typing import List, Literal
 
 import psycopg2
 from dotenv import load_dotenv
 from jinja2 import Template
-from openai import OpenAI
 from pydantic import BaseModel, Field, ValidationError
 
+from scripts.openai_client import make_openai_client
+
+# 加载本地 .env（不提交到 GitHub）
 load_dotenv(".env")
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -63,7 +63,7 @@ class GeneratedDraft(BaseModel):
 
 
 # -------------------------
-# 2) DB 连接 + 向量检索
+# 2) DB + 向量检索（RAG 的 Retrieval）
 # -------------------------
 def get_conn():
     host = os.getenv("DB_HOST", "127.0.0.1")
@@ -76,17 +76,13 @@ def get_conn():
 def vec_to_pgvector_str(vec):
     return "[" + ",".join(f"{x:.6f}" for x in vec) + "]"
 
-def retrieve_topk_chunks(topic: str, top_k: int = 3):
-    """
-    用 embedding + pgvector 检索最相关的 Top-K chunks。
-    返回：list[dict]，每条包含 source_id, chunk_id, content
-    """
+def retrieve_topk_chunks(topic: str, top_k: int):
     api_key = os.getenv("EMBEDDING_API_KEY")
     emb_model = os.getenv("EMBEDDING_MODEL", "text-embedding-3-small")
     if not api_key:
         raise RuntimeError("EMBEDDING_API_KEY missing in .env")
 
-    client = OpenAI(api_key=api_key)
+    client = make_openai_client(api_key)
     resp = client.embeddings.create(model=emb_model, input=topic)
     qvec = resp.data[0].embedding
     qvec_str = vec_to_pgvector_str(qvec)
@@ -122,10 +118,6 @@ def load_template(path: Path) -> Template:
     return Template(path.read_text(encoding="utf-8"))
 
 def build_messages(topic: str, chunks: list):
-    """
-    读取 prompts/system.j2 和 prompts/generate.j2，并渲染为最终提示词文本。
-    为了便于模型消费，把 chunks 以 JSON 字符串形式塞进去。
-    """
     system_t = load_template(PROMPTS_DIR / "system.j2")
     gen_t = load_template(PROMPTS_DIR / "generate.j2")
 
@@ -134,7 +126,6 @@ def build_messages(topic: str, chunks: list):
     system_text = system_t.render()
     user_text = gen_t.render(topic=topic, chunks_json=chunks_json)
 
-    # OpenAI chat 格式 messages
     return [
         {"role": "system", "content": system_text},
         {"role": "user", "content": user_text},
@@ -142,18 +133,18 @@ def build_messages(topic: str, chunks: list):
 
 
 # -------------------------
-# 4) 调用生成模型并校验结构
+# 4) 调用生成模型（AG）并校验 JSON
 # -------------------------
-def generate(topic: str, top_k: int = 3):
+def generate(topic: str, top_k: int):
     gen_api_key = os.getenv("GEN_API_KEY") or os.getenv("EMBEDDING_API_KEY")
-    gen_model = os.getenv("GEN_MODEL", "gpt-4.1-mini")  # 可按需改
+    gen_model = os.getenv("GEN_MODEL", "gpt-4.1-mini")
     if not gen_api_key:
         raise RuntimeError("GEN_API_KEY missing (or reuse EMBEDDING_API_KEY)")
 
     chunks = retrieve_topk_chunks(topic, top_k=top_k)
     messages = build_messages(topic, chunks)
 
-    client = OpenAI(api_key=gen_api_key)
+    client = make_openai_client(gen_api_key)
     resp = client.chat.completions.create(
         model=gen_model,
         messages=messages,
@@ -161,31 +152,28 @@ def generate(topic: str, top_k: int = 3):
     )
     text = resp.choices[0].message.content
 
-    # 尝试把模型输出当 JSON 解析
     data = json.loads(text)
-
-    # Pydantic 校验结构（不通过会抛 ValidationError）
     draft = GeneratedDraft.model_validate(data)
     return draft, chunks
 
 
 def main():
-    topic = os.getenv("TOPIC", "如何把间隔重复和提取练习结合起来用于学习与写作？")
-    top_k = int(os.getenv("TOP_K", "3"))
+    parser = argparse.ArgumentParser(description="CogWrite RAG draft generator")
+    parser.add_argument("--topic", type=str, required=True, help="写作选题/问题")
+    parser.add_argument("--top-k", type=int, default=3, help="检索 Top-K chunks 数量")
+    args = parser.parse_args()
 
     try:
-        draft, chunks = generate(topic, top_k=top_k)
+        draft, chunks = generate(args.topic, args.top_k)
     except json.JSONDecodeError:
-        print("[!] Model output is not valid JSON. Consider adding a JSON-repair fallback.")
+        print("[!] 模型输出不是合法 JSON。下一步可以加 JSON 修复 fallback。")
         raise
     except ValidationError as e:
-        print("[!] JSON parsed but failed schema validation:")
+        print("[!] JSON 解析成功但 schema 校验失败：")
         print(e)
         raise
 
-    print("=== Topic ===")
-    print(topic)
-    print("\n=== Retrieved Chunks (TopK) ===")
+    print("=== Retrieved Chunks (TopK) ===")
     print(json.dumps(chunks, ensure_ascii=False, indent=2))
     print("\n=== Generated Draft (validated) ===")
     print(draft.model_dump_json(ensure_ascii=False, indent=2))
