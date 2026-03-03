@@ -28,3 +28,29 @@
 - [ ] Modeling：分步生成 + 引用门控 + schema 校验
 - [ ] Evaluation：golden set + regression report
 - [ ] Deployment：docker compose 一键运行 + CI pipeline
+
+## 本地运行（开发模式）
+
+### 1) 启动数据库（Postgres + pgvector）
+```bash
+docker compose -f infra/docker-compose.yml up -d
+```
+
+### 2) 启动数据库（Postgres + pgvector）
+```bash
+python3 -m venv .venv
+source .venv/bin/activate
+pip install -r requirements.txt
+```
+### 3) 启动 API 服务
+```bash
+uvicorn app.main:app --reload --port 8000
+```
+### 4) 访问接口文档（Swagger UI)
+http://127.0.0.1:8000/docs
+
+### 5) 命令行生成示例（CLI）
+> 注意：脚本以模块方式运行，避免 `No module named 'scripts'` 的导入问题。
+```bash
+python -m scripts.generate_draft --topic "如何把间隔重复和提取练习结合起来用于学习与写作？" --top-k 2
+```
