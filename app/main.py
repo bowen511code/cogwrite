@@ -88,3 +88,26 @@ def list_chunks(source_id: str):
         {"chunk_id": r[0], "chunk_index": r[1], "content": r[2]}
         for r in rows
     ]
+
+from pydantic import BaseModel
+
+class GenerateRequest(BaseModel):
+    topic: str
+    top_k: int = 3
+
+@app.post("/generate")
+def generate_api(req: GenerateRequest):
+    """
+    RAG 生成接口：
+    - 输入 topic/top_k
+    - 返回：TopK 证据 + 结构化草稿（已通过 schema 校验）
+    """
+    from scripts.generate_draft import generate  # 复用同一条链路
+
+    draft, chunks = generate(req.topic, req.top_k)
+    return {
+        "topic": req.topic,
+        "top_k": req.top_k,
+        "chunks": chunks,
+        "draft": draft.model_dump(),
+    }
